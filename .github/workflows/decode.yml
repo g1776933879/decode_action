@@ -1,0 +1,59 @@
+name: Decode JavaScript File
+
+# 修复 P0-2：防止 push 自触发死循环
+# - 增加 concurrency 防并发冲突
+# - 增加 workflow_dispatch 手动触发
+# - 核心修复：git diff 检测无变更时跳过 commit，不触发新 run
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # 支持手动触发，省去 fork 后的"点一下初始化"
+
+concurrency:
+  group: decode-action
+  cancel-in-progress: true
+
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4  # v2 → v4 安全更新
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Execute Python script for decoding
+        run: |
+          python src/decode.py
+
+      - name: Install dependencies and run decode
+        run: |
+          npm ci          # npm install → npm ci（可复现构建）
+          npm run decode -- -i input.js -o output.js
+
+      - name: Configure Git author
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "action"
+
+      - name: Commit decoded output
+        run: |
+          # 核心修复：有变更才提交，无变更跳过，不触发新 run
+          if git diff --quiet output.js output.py; then
+            echo "No changes detected, skip commit"
+            exit 0
+          fi
+          git add output.js output.py
+          git commit -m "Add decoded output file"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
